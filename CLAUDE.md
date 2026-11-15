@@ -20,5 +20,7 @@ M1 MacBook Air(macOS 13+)용 배터리 충전 제한 메뉴바 앱. 개인 학�
 - 하드웨어(SMC)를 건드리는 코드는 내가 직접 실행·확인한 뒤 머지
 
 ## 작업 규칙
-- 단계 하나 = 브랜치 하나(phase/N-이름). 빌드·테스트 통과 후 커밋
-- 커밋 메시지는 conventional commits(feat/fix/chore/docs)
+- 작업은 GitHub 이슈 단위로 진행. 이슈 제목은 conventional commits 형식(예: `feat: 메뉴바 배터리 표시`)
+- 브랜치는 `feature/<이슈번호>-<이름>` (버그는 `fix/`, 문서는 `docs/`, 잡일은 `chore/`)
+- PR 본문에 `Closes #<이슈번호>`를 적고, main에는 PR로만 머지(직접 커밋 금지)
+- 빌드·테스트 통과 후 커밋. 커밋 메시지는 conventional commits(feat/fix/chore/docs)
