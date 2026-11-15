@@ -1,0 +1,43 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# SwiftPM / Swift
+.build/
+.swiftpm/
+Packages/
+*.xcframework
+Package.resolved
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+.swiftpm/xcode/
+
+# 앱 번들 / 빌드 산출물
+dist/
+*.app
+*.dSYM/
+*.o
+*.dylib
+
+# 로그 / 임시 파일
+*.log
+*.tmp
+*.swp
+
+# 에디터
+.idea/
+.vscode/
+
+# 비밀 값
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.mobileprovision
