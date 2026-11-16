@@ -44,6 +44,16 @@ private func run(_ command: Command) -> Int32 {
             printError("실패: \(error)")
             return 1
         }
+
+    case .disableCharging(let revertAfter):
+        let controller = ChargingController(smc: smc, log: { print($0) })
+        // 쓰는 도중 들어온 시그널도 놓치지 않도록 쓰기 전에 대기자를 준비한다.
+        let waiter = revertAfter.map { _ in SignalWaiter() }
+        return runDisable(
+            controller: controller,
+            revertAfter: revertAfter,
+            wait: { seconds in waiter?.wait(seconds: seconds) ?? .timeout }
+        )
     }
 }
 

@@ -35,6 +35,27 @@ struct ChargingController {
         log("완료: 충전 허용(00)으로 설정함")
     }
 
+    /// 충전 차단(02)을 쓴다. 첫 실패에서 멈추고 두 키를 00으로 되돌리기를 시도한 뒤 원래 오류를 던진다.
+    func disableCharging() throws {
+        try preflight()
+        do {
+            for key in ChargingWhitelist.keys {
+                try writeAndVerify(key, .block)
+            }
+        } catch {
+            log("오류: \(error)")
+            log("차단 쓰기가 실패해 충전 허용(00)으로 복구를 시도함")
+            do {
+                try writeAllBestEffort(.allow)
+                log("복구 완료: 두 키 모두 00")
+            } catch {
+                log("복구 실패: enable-charging을 다시 실행해 확인할 것")
+            }
+            throw error
+        }
+        log("완료: 충전 차단(02)으로 설정함")
+    }
+
     /// 두 키가 모두 있고 1바이트인지 확인하고 현재 값을 출력한다. 하나라도 어긋나면 쓰기 전에 던진다.
     func preflight() throws {
         for key in ChargingWhitelist.keys {
