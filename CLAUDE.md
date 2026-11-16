@@ -24,3 +24,9 @@ M1 MacBook Air(macOS 13+)용 배터리 충전 제한 메뉴바 앱. 개인 학�
 - 브랜치는 `feature/<이슈번호>-<이름>` (버그는 `fix/`, 문서는 `docs/`, 잡일은 `chore/`)
 - PR 본문에 `Closes #<이슈번호>`를 적고, main에는 PR로만 머지(직접 커밋 금지)
 - 빌드·테스트 통과 후 커밋. 커밋 메시지는 conventional commits(feat/fix/chore/docs)
+
+## SMC 실측 사실 (MacBookAir10,1 / macOS 13.5.2, docs/smc-probe-results.md 참고)
+- 차단은 `CH0B ← 02` 한 번만 쓴다 (읽힘 02/02). 복구는 `CH0B`, `CH0C`를 모두 00으로 쓰고 쌍이 00/00인지 검증한다.
+- CH0B/CH0C는 한 상태를 공유한다. 키별로 따로 검증하지 말고 쌍으로 검증한다.
+- 충전 상태는 값이 바뀐 뒤 최대 약 60초 늦게 반영된다. 쓴 직후 재판단하지 않는다.
+- 프로그램이 종료돼도 차단 값은 남는다. 앱·헬퍼에는 반드시 fail-safe가 필요하다.
