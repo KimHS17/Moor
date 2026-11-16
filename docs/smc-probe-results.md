@@ -50,17 +50,54 @@ CH0I  [ui8 ]  1 byte(s)  00
 - **`CH0B`/`CH0C`가 소스에서 확인한 `00`/`02`가 아닌 `01`이었다.** 이때 AlDente(앱과 권한 헬퍼)가 실행 중이었으므로 AlDente가 쓴 값일 가능성이 있다. `01`의 의미는 확인하지 못했다.
 - `CHTE`가 macOS 13.5.2에도 존재한다(값 `00 00 00 00`).
 
-### 소유자 직접 확인
+### 소유자 직접 확인 (2026-11-16)
 
-- [ ] `read CH0B CH0C` 결과:
-- [ ] AlDente를 완전히 종료한(또는 제한을 푼) 상태에서의 `read CH0B CH0C` 결과:
+- `CH0B`, `CH0C`는 각각 1바이트다.
+- `02`/`02`일 때 충전이 멈추고, `00`/`00`일 때 충전이 재개된다.
+- 위 값은 AlDente가 쓴 값을 `read`로 관찰한 것이다. MoorSMCProbe로 직접 쓴 결과는 아래 "쓰기 결과"에 기록한다.
+- `01`의 의미는 확인하지 못했다. MoorSMCProbe는 `01`을 "알 수 없음"으로 경고만 하고 쓰기는 계속 진행한다.
+
+## 쓰기 명령
+
+화이트리스트는 키 2개(`CH0B`, `CH0C`) × 값 2개(`00`, `02`)뿐이다. 임의 키에 쓰는 명령은 없다.
+
+| 명령 | 동작 |
+|---|---|
+| `enable-charging` | 두 키에 `00`을 쓴다. 한 키가 실패해도 나머지 키는 계속 쓴다. |
+| `disable-charging` | 두 키에 `02`를 쓴다. 중간에 실패하면 두 키를 `00`으로 되돌리기를 시도한다. |
+| `disable-charging --revert-after <초>` | 차단한 뒤, 시간이 지나거나 SIGINT/SIGTERM/SIGHUP을 받으면 `00`으로 복구한다. |
+
+공통 동작: root가 아니면 SMC를 열기 전에 종료한다. 두 키가 모두 있고 1바이트인지 확인한 뒤 현재 값을 출력하고, 쓴 뒤 다시 읽어 검증하며, 실패하면 0이 아닌 코드로 종료한다.
+
+종료 코드: 성공 0, 실패 1, 사용법 오류 2, `--revert-after` 중 시그널로 끝나 복구한 경우 128+시그널 번호(Ctrl-C는 130).
+
+한계:
+- `--revert-after` 없이 `disable-charging`을 실행하면 차단은 `enable-charging`을 실행할 때까지 남는다.
+- SIGKILL(`kill -9`)이나 강제 종료로는 복구가 실행되지 않는다. 이 경우 `enable-charging`을 직접 실행한다.
+- AlDente 같은 다른 충전 제한 도구가 실행 중이면 값을 다시 덮어쓸 수 있다. 실측은 그 도구를 완전히 종료하고 한다.
+
+## 쓰기 실측 절차 (소유자가 직접 실행)
+
+전원을 연결하고, AlDente를 완전히 종료한 뒤 진행한다. 각 단계 뒤 `pmset -g batt`로 충전 상태를 확인한다.
+
+```
+swift build
+B=.build/debug/MoorSMCProbe
+
+$B read CH0B CH0C                              # 시작 값 기록
+sudo $B enable-charging                        # 1. 복구 명령부터 확인
+sudo $B disable-charging --revert-after 60     # 2. 60초 뒤 자동 복구 확인
+sudo $B disable-charging --revert-after 600    # 3. 도중에 Ctrl-C로 복구 확인 (종료 코드 130)
+sudo $B disable-charging                       # 4. 옵션 없이 차단
+sudo $B enable-charging                        # 5. 복구
+$B read CH0B CH0C                              # 끝 값이 00 00인지 확인
+```
 
 ## 쓰기 결과 (미실시)
 
-`enable-charging`, `disable-charging` 구현 후 기록한다.
-
-- [ ] `enable-charging` 전후 값, 실제 충전 재개 여부
-- [ ] `disable-charging` 전후 값, 실제 충전 중단 여부
-- [ ] `--revert-after` 만료와 SIGINT/SIGTERM 복구
-- [ ] 잠자기·덮개 닫힘 후 차단 유지 여부
-- [ ] 재부팅 후 값
+- [ ] `enable-charging` 전후 값, 실제 충전 재개 여부:
+- [ ] `disable-charging` 전후 값, 실제 충전 중단 여부:
+- [ ] `--revert-after` 시간 만료 복구:
+- [ ] `--revert-after` 중 SIGINT(Ctrl-C) 복구:
+- [ ] 잠자기·덮개 닫힘 후 차단 유지 여부:
+- [ ] 재부팅 후 값:
