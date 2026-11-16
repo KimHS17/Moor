@@ -8,6 +8,7 @@ enum SMCError: Error, Equatable, CustomStringConvertible {
     case keyNotFound(FourCC)
     case smcResult(key: FourCC, code: UInt8)
     case unsupportedDataSize(key: FourCC, size: Int)
+    case notWhitelisted(key: FourCC, bytes: [UInt8])
 
     var description: String {
         switch self {
@@ -23,14 +24,17 @@ enum SMCError: Error, Equatable, CustomStringConvertible {
             return "키 \(key): SMC 결과 코드 0x\(String(code, radix: 16))"
         case .unsupportedDataSize(let key, let size):
             return "키 \(key): 지원하지 않는 데이터 크기 \(size)"
+        case .notWhitelisted(let key, let bytes):
+            return "키 \(key)에 값 \(hex(bytes)) 쓰기는 화이트리스트에 없어 거부함"
         }
     }
 }
 
-/// AppleSMC 사용자 클라이언트 연결. 이 단계에서는 읽기만 지원한다.
-final class SMCConnection {
+/// AppleSMC 사용자 클라이언트 연결. 쓰기는 `ChargingWhitelist`가 허용하는 키와 값만 받는다.
+final class SMCConnection: SMCAccess {
     private static let structMethodSelector: UInt32 = 2
     private static let commandReadBytes: UInt8 = 5
+    private static let commandWriteBytes: UInt8 = 6
     private static let commandReadKeyInfo: UInt8 = 9
     private static let resultKeyNotFound: UInt8 = 0x84
 
@@ -72,6 +76,21 @@ final class SMCConnection {
 
         let output = try call(input, key: key)
         return SMCValue(key: key, info: info, bytes: output.dataBytes(count: info.dataSize))
+    }
+
+    /// 화이트리스트에 없는 키나 값이면 SMC를 호출하지 않고 던진다. root 권한이 필요하다.
+    func write(_ key: FourCC, bytes: [UInt8]) throws {
+        guard ChargingWhitelist.permits(key: key, bytes: bytes) else {
+            throw SMCError.notWhitelisted(key: key, bytes: bytes)
+        }
+
+        var input = SMCKeyData()
+        input.key = key.rawValue
+        input.dataSize = UInt32(bytes.count)
+        input.command = Self.commandWriteBytes
+        input.setDataBytes(bytes)
+
+        _ = try call(input, key: key)
     }
 
     private func call(_ input: SMCKeyData, key: FourCC) throws -> SMCKeyData {

@@ -1,5 +1,5 @@
 /// SMC 키와 데이터 타입에 쓰이는 4글자 코드. 첫 글자가 최상위 바이트다.
-struct FourCC: Equatable, CustomStringConvertible {
+struct FourCC: Hashable, CustomStringConvertible {
     let rawValue: UInt32
 
     init(rawValue: UInt32) {
@@ -30,10 +30,7 @@ struct SMCValue: Equatable {
     let bytes: [UInt8]
 
     var hexString: String {
-        bytes.map { byte in
-            let hex = String(byte, radix: 16)
-            return hex.count == 1 ? "0" + hex : hex
-        }.joined(separator: " ")
+        hex(bytes)
     }
 
     /// 예: `CH0B  [ui8 ]  1 byte(s)  00`

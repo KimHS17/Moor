@@ -45,11 +45,21 @@ final class CommandTests: XCTestCase {
         XCTAssertThrowsError(try Command.parse(["read", "CH0B", "TOOLONG"]).get())
     }
 
-    /// 쓰기 서브커맨드는 아직 없다. 임의 키 쓰기는 앞으로도 만들지 않는다.
+    /// 임의 키에 쓰는 서브커맨드는 만들지 않는다.
     func testRejectsUnknownAndWriteSubcommands() {
-        for name in ["write", "enable-charging", "disable-charging", "bogus"] {
-            XCTAssertThrowsError(try Command.parse([name, "CH0B"]).get(), name)
+        for name in ["write", "bogus"] {
+            XCTAssertThrowsError(try Command.parse([name, "CH0B", "02"]).get(), name)
         }
+    }
+
+    func testParsesEnableCharging() {
+        XCTAssertEqual(Command.parse(["enable-charging"]), .success(.enableCharging))
+        XCTAssertThrowsError(try Command.parse(["enable-charging", "CH0B"]).get())
+    }
+
+    func testOnlyWriteCommandsRequireRoot() {
+        XCTAssertFalse(Command.read([FourCC("CH0B")!]).requiresRoot)
+        XCTAssertTrue(Command.enableCharging.requiresRoot)
     }
 }
 

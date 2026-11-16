@@ -51,4 +51,13 @@ struct SMCKeyData {
     func dataBytes(count: Int) -> [UInt8] {
         withUnsafeBytes(of: bytes) { Array($0.prefix(max(0, min(count, Self.maxDataSize)))) }
     }
+
+    /// `bytes` 앞쪽에 값을 복사한다. 32바이트를 넘는 부분은 버린다.
+    mutating func setDataBytes(_ source: [UInt8]) {
+        withUnsafeMutableBytes(of: &bytes) { buffer in
+            for (index, byte) in source.prefix(Self.maxDataSize).enumerated() {
+                buffer[index] = byte
+            }
+        }
+    }
 }

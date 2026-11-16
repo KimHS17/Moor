@@ -40,4 +40,11 @@ final class SMCKeyDataLayoutTests: XCTestCase {
         XCTAssertEqual(data.dataBytes(count: 99).count, 32)
         XCTAssertEqual(data.dataBytes(count: -1), [])
     }
+
+    func testSetDataBytesWritesAtOffset48() {
+        var data = SMCKeyData()
+        data.setDataBytes([0x02])
+        XCTAssertEqual(data.dataBytes(count: 2), [0x02, 0x00])
+        withUnsafeBytes(of: data) { XCTAssertEqual($0[48], 0x02) }
+    }
 }
