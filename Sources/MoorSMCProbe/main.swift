@@ -60,6 +60,16 @@ private func run(_ command: Command) -> Int32 {
             revertAfter: revertAfter,
             wait: { seconds in waiter?.wait(seconds: seconds) ?? .timeout }
         )
+
+    case .set(let plan):
+        // 쓰는 도중 들어온 시그널도 놓치지 않도록 쓰기 전에 대기자를 준비한다.
+        let waiter = SignalWaiter()
+        return SetExperiment.run(
+            smc: smc,
+            plan: plan,
+            tick: { waiter.wait(milliseconds: $0) },
+            log: { print($0) }
+        )
     }
 }
 

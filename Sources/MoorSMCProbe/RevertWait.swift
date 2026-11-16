@@ -74,7 +74,13 @@ final class SignalWaiter {
 
     /// 벽시계 기준으로 기다리므로 잠자기 시간도 포함된다.
     func wait(seconds: Int) -> WaitOutcome {
-        _ = semaphore.wait(wallTimeout: .now() + .seconds(seconds))
+        wait(milliseconds: seconds * 1000)
+    }
+
+    /// 이미 시그널을 받았으면 기다리지 않고 바로 돌려준다. 여러 번 불러도 된다.
+    func wait(milliseconds: Int) -> WaitOutcome {
+        if let number = queue.sync(execute: { received }) { return .signal(number) }
+        _ = semaphore.wait(wallTimeout: .now() + .milliseconds(milliseconds))
         return queue.sync { received.map(WaitOutcome.signal) ?? .timeout }
     }
 }
