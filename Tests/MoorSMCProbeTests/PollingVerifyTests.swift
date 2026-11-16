@@ -85,7 +85,7 @@ final class PollingVerifyTests: XCTestCase {
         XCTAssertThrowsError(try controller(smc).disableCharging()) {
             XCTAssertEqual($0 as? ChargingError, .verifyFailed(key: ch0c, expected: 0x02, observed: [[0x00]]))
         }
-        XCTAssertTrue(lines.contains("읽기 변화 CH0B: 01 (0ms) → 00 (200ms)"))
+        XCTAssertTrue(lines.contains("읽기 변화 CH0B/CH0C: 01/00 (0ms) → 00/00 (200ms)"))
         XCTAssertTrue(lines.contains("복구 완료: 두 키 모두 00"))
         XCTAssertEqual(smc.value("CH0B"), [0x00])
         XCTAssertEqual(smc.value("CH0C"), [0x00])
@@ -98,7 +98,7 @@ final class PollingVerifyTests: XCTestCase {
         lines = []
 
         XCTAssertThrowsError(try controller.disableCharging()) {
-            XCTAssertEqual($0 as? ChargingError, .verifyFailed(key: ch0b, expected: 0x02, observed: [[0x03]]))
+            XCTAssertEqual($0 as? ChargingError, .pairVerifyFailed(expected: 0x02, observed: ["03/02"]))
         }
         XCTAssertFalse(lines.contains("완료: 충전 차단(02)으로 설정함"))
     }

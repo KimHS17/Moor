@@ -17,6 +17,8 @@ enum ChargingError: Error, Equatable, CustomStringConvertible {
     case unexpectedDataSize(key: FourCC, size: Int)
     /// `observed`는 제한 시간 동안 읽힌 값의 변화 순서.
     case verifyFailed(key: FourCC, expected: UInt8, observed: [[UInt8]])
+    /// `observed`는 `CH0B/CH0C` 쌍이 읽힌 변화 순서(예: `["01/01", "00/00"]`).
+    case pairVerifyFailed(expected: UInt8, observed: [String])
 
     var description: String {
         switch self {
@@ -25,6 +27,9 @@ enum ChargingError: Error, Equatable, CustomStringConvertible {
         case .verifyFailed(let key, let expected, let observed):
             let sequence = observed.map(hex).joined(separator: " → ")
             return "키 \(key): 검증 실패 (기대 \(hex([expected])), 읽힌 값 \(sequence))"
+        case .pairVerifyFailed(let expected, let observed):
+            let want = hex([expected])
+            return "쌍 검증 실패 (기대 \(want)/\(want), 읽힌 값 \(observed.joined(separator: " → ")))"
         }
     }
 }
@@ -43,11 +48,10 @@ struct ChargingController {
     let log: (String) -> Void
     var sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
 
-    /// 충전 허용(00)으로 복구한다. 한 키가 실패해도 나머지 키는 계속 시도하고, 마지막에 첫 오류를 던진다.
+    /// 충전 허용(00)으로 복구한다. 두 키에 모두 00을 쓴 뒤 쌍의 최종 상태를 검증한다.
     func enableCharging() throws {
         try preflight()
-        try writeAllBestEffort(.allow)
-        try confirmAll(.allow)
+        try writeBothAllowAndConfirm()
         log("완료: 충전 허용(00)으로 설정함")
     }
 
@@ -58,13 +62,12 @@ struct ChargingController {
             for key in ChargingWhitelist.keys {
                 try writeAndVerify(key, .block)
             }
-            try confirmAll(.block)
+            try confirmPair(.block)
         } catch {
             log("오류: \(error)")
             log("차단 쓰기가 실패해 충전 허용(00)으로 복구를 시도함")
             do {
-                try writeAllBestEffort(.allow)
-                try confirmAll(.allow)
+                try writeBothAllowAndConfirm()
                 log("복구 완료: 두 키 모두 00")
             } catch {
                 log("복구 실패: enable-charging을 다시 실행해 확인할 것")
@@ -72,6 +75,28 @@ struct ChargingController {
             throw error
         }
         log("완료: 충전 차단(02)으로 설정함")
+    }
+
+    /// 두 키에 모두 00을 쓴 뒤 쌍이 00/00이 되는지 본다. 키 하나를 쓴 직후의 값은 검증하지 않는다
+    /// (두 키가 같은 값으로 읽히고, 한 키만 00으로 쓴 상태에서는 01이 남는 것이 실측됐다).
+    /// 한 키의 쓰기가 실패해도 나머지 키는 쓰고, 쓰기 오류가 있었으면 그 오류를 던진다.
+    func writeBothAllowAndConfirm() throws {
+        var firstError: Error?
+        for key in ChargingWhitelist.keys {
+            do {
+                log("쓰기 \(key) ← \(hex([ChargingValue.allow.rawValue]))")
+                try smc.write(key, bytes: [ChargingValue.allow.rawValue])
+            } catch {
+                log("오류: \(error)")
+                if firstError == nil { firstError = error }
+            }
+        }
+        do {
+            try confirmPair(.allow)
+        } catch {
+            throw firstError ?? error
+        }
+        if let firstError { throw firstError }
     }
 
     /// 두 키가 모두 있고 1바이트인지 확인하고 현재 값을 출력한다. 하나라도 어긋나면 쓰기 전에 던진다.
@@ -92,19 +117,6 @@ struct ChargingController {
         }
     }
 
-    func writeAllBestEffort(_ value: ChargingValue) throws {
-        var firstError: Error?
-        for key in ChargingWhitelist.keys {
-            do {
-                try writeAndVerify(key, value)
-            } catch {
-                log("오류: \(error)")
-                if firstError == nil { firstError = error }
-            }
-        }
-        if let firstError { throw firstError }
-    }
-
     func writeAndVerify(_ key: FourCC, _ value: ChargingValue) throws {
         log("쓰기 \(key) ← \(hex([value.rawValue]))")
         try smc.write(key, bytes: [value.rawValue])
@@ -112,12 +124,34 @@ struct ChargingController {
         log("쓰기 확인 \(key) = \(hex([value.rawValue]))")
     }
 
-    /// 다른 키를 쓰면서 앞서 쓴 키의 값이 바뀌었을 수 있으므로, 모든 쓰기가 끝난 뒤 두 키를 다시 확인한다.
-    func confirmAll(_ value: ChargingValue) throws {
-        for key in ChargingWhitelist.keys {
-            try pollUntilMatches(key, value)
+    /// 두 키를 함께 읽어 쌍이 모두 기대값이 될 때까지 일정 간격으로 본다.
+    /// 쌍의 변화 순서를 출력하고, 제한 시간까지 맞지 않으면 던진다.
+    func confirmPair(_ value: ChargingValue) throws {
+        let expected = [value.rawValue]
+        let interval = Self.verifyIntervalMilliseconds
+        let names = ChargingWhitelist.keys.map(\.description).joined(separator: "/")
+        var changes: [(pair: String, milliseconds: Int)] = []
+        var matched = false
+
+        var elapsed = 0
+        while true {
+            let values = try ChargingWhitelist.keys.map { try smc.read($0).bytes }
+            let pair = values.map(hex).joined(separator: "/")
+            if changes.last?.pair != pair { changes.append((pair, elapsed)) }
+            if values.allSatisfy({ $0 == expected }) {
+                matched = true
+                break
+            }
+            guard elapsed + interval <= Self.verifyTimeoutMilliseconds else { break }
+            sleep(Double(interval) / 1000)
+            elapsed += interval
         }
-        log("최종 확인: 두 키 모두 \(hex([value.rawValue]))")
+
+        log("읽기 변화 \(names): " + changes.map { "\($0.pair) (\($0.milliseconds)ms)" }.joined(separator: " → "))
+        guard matched else {
+            throw ChargingError.pairVerifyFailed(expected: value.rawValue, observed: changes.map(\.pair))
+        }
+        log("최종 확인: \(names) = \(changes.last?.pair ?? "")")
     }
 
     /// 값이 기대값과 같아질 때까지 일정 간격으로 읽는다. 읽힌 값의 변화 순서를 출력하고,

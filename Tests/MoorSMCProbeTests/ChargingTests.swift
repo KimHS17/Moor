@@ -60,8 +60,9 @@ final class EnableChargingTests: XCTestCase {
         try controller(smc).enableCharging()
 
         XCTAssertEqual(Array(lines.prefix(2)), ["현재 CH0B = 02 (충전 차단)", "현재 CH0C = 02 (충전 차단)"])
-        XCTAssertTrue(lines.contains("쓰기 확인 CH0B = 00"))
-        XCTAssertTrue(lines.contains("쓰기 확인 CH0C = 00"))
+        XCTAssertTrue(lines.contains("쓰기 CH0B ← 00"))
+        XCTAssertTrue(lines.contains("쓰기 CH0C ← 00"))
+        XCTAssertTrue(lines.contains("최종 확인: CH0B/CH0C = 00/00"))
     }
 
     func testUnknownValueWarnsButProceeds() throws {
@@ -94,7 +95,7 @@ final class EnableChargingTests: XCTestCase {
         let smc = FakeSMC(["CH0B": [0x02], "CH0C": [0x02]])
         smc.ignoredWrites = [ch0c]
         XCTAssertThrowsError(try controller(smc).enableCharging()) {
-            XCTAssertEqual($0 as? ChargingError, .verifyFailed(key: ch0c, expected: 0x00, observed: [[0x02]]))
+            XCTAssertEqual($0 as? ChargingError, .pairVerifyFailed(expected: 0x00, observed: ["00/02"]))
         }
     }
 
