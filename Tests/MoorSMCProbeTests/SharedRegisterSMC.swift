@@ -11,6 +11,13 @@ final class SharedRegisterSMC: SMCAccess {
 
     var register: UInt8
     var failingWrites: Set<FourCC> = []
+    /// 쓰기는 성공하지만 값이 바뀌지 않는 키.
+    var ignoredWrites: Set<FourCC> = []
+    /// 쓴 뒤 이 횟수만큼의 읽기는 쓰기 전 값을 돌려준다(값이 늦게 바뀌는 상황 재현용).
+    var staleReadsAfterWrite = 0
+    private var staleValue: UInt8 = 0
+    private var staleRemaining = 0
+    private(set) var readCount = 0
     private(set) var writes: [(key: FourCC, bytes: [UInt8])] = []
 
     init(register: UInt8 = 0x00) { self.register = register }
@@ -21,7 +28,13 @@ final class SharedRegisterSMC: SMCAccess {
     }
 
     func read(_ key: FourCC) throws -> SMCValue {
-        SMCValue(key: key, info: try keyInfo(key), bytes: [register])
+        let info = try keyInfo(key)
+        readCount += 1
+        if staleRemaining > 0 {
+            staleRemaining -= 1
+            return SMCValue(key: key, info: info, bytes: [staleValue])
+        }
+        return SMCValue(key: key, info: info, bytes: [register])
     }
 
     func write(_ key: FourCC, bytes: [UInt8]) throws {
@@ -30,6 +43,10 @@ final class SharedRegisterSMC: SMCAccess {
         }
         writes.append((key, bytes))
         if failingWrites.contains(key) { throw FakeSMCFailure() }
+        if ignoredWrites.contains(key) { return }
+        // 연속으로 쓰면 첫 쓰기 전의 값이 계속 보이게 한다.
+        if staleRemaining == 0 { staleValue = register }
+        staleRemaining = staleReadsAfterWrite
         let bit: UInt8 = key == Self.b ? 0x02 : 0x01
         if bytes[0] == 0x00 { register &= ~bit } else { register |= bit }
     }

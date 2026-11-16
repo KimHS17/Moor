@@ -27,12 +27,13 @@ enum Command: Equatable {
           read             SMC 키의 타입, 크기, 값을 16진수로 출력한다. (읽기 전용)
                            예: MoorSMCProbe read CH0B CH0C
           watch            CH0B, CH0C를 200ms마다 읽어 시각과 함께 출력한다. (읽기 전용, 1~3600초)
-          enable-charging  CH0B, CH0C에 00을 써서 충전을 허용한다. (복구용, root 필요)
-          disable-charging CH0B, CH0C에 02를 써서 충전을 차단한다. (root 필요)
+          enable-charging  CH0B, CH0C에 모두 00을 쓰고 쌍이 00/00이 되는지 확인한다. (복구용, root 필요)
+          disable-charging CH0B에만 02를 쓰고 쌍이 02/02가 되는지 확인한다. (root 필요)
                            --revert-after <초>  지정한 시간(1~86400초)이 지나거나
                            SIGINT/SIGTERM/SIGHUP을 받으면 00으로 복구한다.
-                           옵션이 없으면 한 번 쓰고 끝나며, 차단은 enable-charging을
+                           옵션이 없으면 한 번 쓰고 끝나며, 02 값은 enable-charging을
                            실행할 때까지 남는다.
+                           쓰기 명령은 키 값만 검증하고 실제 충전 상태는 판단하지 않는다.
           set              실험용. CH0B에 <B값>, CH0C에 <C값>을 쓴다. (root 필요)
                            값은 00 또는 02만 받고, C값이 - 이면 CH0C는 쓰지 않는다.
                            --order bc|cb  쓰는 순서 (기본 bc: CH0B 먼저)

@@ -5,7 +5,7 @@ enum WaitOutcome: Equatable {
     case signal(Int32)
 }
 
-/// 충전을 차단하고, `revertAfter`가 있으면 `wait`가 돌아온 뒤 충전 허용으로 복구한다.
+/// 차단 값을 쓰고, `revertAfter`가 있으면 `wait`가 돌아온 뒤 두 키를 00으로 복구한다.
 /// 종료 코드를 돌려준다: 성공 0, 시그널로 끝나 복구했으면 128+시그널 번호, 실패 1.
 func runDisable(
     controller: ChargingController,
@@ -20,11 +20,11 @@ func runDisable(
     }
 
     guard let revertAfter else {
-        controller.log("주의: 차단은 enable-charging을 실행할 때까지 남음")
+        controller.log("주의: 02 값은 enable-charging을 실행할 때까지 남음")
         return 0
     }
 
-    controller.log("\(revertAfter)초 뒤 또는 SIGINT/SIGTERM/SIGHUP을 받으면 충전 허용으로 복구함")
+    controller.log("\(revertAfter)초 뒤 또는 SIGINT/SIGTERM/SIGHUP을 받으면 두 키를 00으로 복구함")
     let outcome = wait(revertAfter)
     switch outcome {
     case .timeout: controller.log("시간이 지나 복구를 시작함")

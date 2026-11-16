@@ -201,13 +201,23 @@ final class SetExperimentTests: XCTestCase {
         XCTAssertEqual(ticks.count, 5 + 25)
     }
 
-    func testUnknownStartValueWarnsButProceeds() {
+    func testKnownStartPairDoesNotWarn() {
         let smc = SharedRegisterSMC(register: 0x01)
         let code = run(smc, SetPlan(b: .block, c: nil, order: .bc, holdSeconds: 1))
 
         XCTAssertEqual(code, 0)
-        XCTAssertEqual(lines.filter { $0.hasPrefix("경고:") }.count, 2)
+        XCTAssertTrue(lines.contains("현재 CH0B/CH0C = 01/01 (CH0C 차단 값만 설정됨)"))
+        XCTAssertFalse(lines.contains { $0.hasPrefix("경고:") })
         XCTAssertEqual(smc.register, 0x00)
+    }
+
+    func testUnrecognizedStartPairWarnsButProceeds() {
+        let smc = FakeSMC(["CH0B": [0x02], "CH0C": [0x00]])
+        let code = run(smc, SetPlan(b: .block, c: nil, order: .bc, holdSeconds: 1))
+
+        XCTAssertEqual(code, 0)
+        XCTAssertEqual(lines.filter { $0.hasPrefix("경고:") }.count, 1)
+        XCTAssertEqual(smc.value("CH0B"), [0x00])
     }
 }
 

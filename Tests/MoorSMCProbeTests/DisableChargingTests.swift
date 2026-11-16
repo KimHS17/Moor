@@ -4,31 +4,104 @@ import XCTest
 private let ch0b = FourCC("CH0B")!
 private let ch0c = FourCC("CH0C")!
 
+private func described(_ writes: [(key: FourCC, bytes: [UInt8])]) -> [String] {
+    writes.map { "\($0.key)=\(hex($0.bytes))" }
+}
+
 final class DisableChargingTests: XCTestCase {
     private var lines: [String] = []
+    private var sleeps: [TimeInterval] = []
 
-    private func controller(_ smc: FakeSMC) -> ChargingController {
+    private func controller(_ smc: SMCAccess) -> ChargingController {
         lines = []
-        return ChargingController(smc: smc, log: { [unowned self] in self.lines.append($0) }, sleep: { _ in })
+        sleeps = []
+        return ChargingController(
+            smc: smc,
+            log: { [unowned self] in self.lines.append($0) },
+            sleep: { [unowned self] in self.sleeps.append($0) }
+        )
     }
 
-    func testWritesTwoToBothKeysInOrderAndVerifies() throws {
+    func testWritesOnlyCH0BAndConfirmsPair() throws {
+        let smc = SharedRegisterSMC()
+        try controller(smc).disableCharging()
+
+        XCTAssertEqual(described(smc.writes), ["CH0B=02"])
+        XCTAssertEqual(smc.register, 0x02)
+        XCTAssertEqual(lines, [
+            "현재 CH0B/CH0C = 00/00 (차단 값 없음)",
+            "쓰기 CH0B ← 02",
+            "읽기 변화 CH0B/CH0C: 02/02 (0ms)",
+            "최종 CH0B/CH0C = 02/02 (CH0B 차단 값만 설정됨)",
+            "완료: 키 값이 02/02가 됨. 실제 충전 상태는 확인하지 않음. 반영에 수십 초 걸릴 수 있음",
+        ])
+    }
+
+    func testAlreadyBlockedStaysBlocked() throws {
+        let smc = SharedRegisterSMC(register: 0x02)
+        try controller(smc).disableCharging()
+        XCTAssertEqual(smc.register, 0x02)
+    }
+
+    func testPollsUntilPairBecomesTwo() throws {
+        let smc = SharedRegisterSMC()
+        smc.staleReadsAfterWrite = 6
+
+        try controller(smc).disableCharging()
+
+        XCTAssertTrue(lines.contains("읽기 변화 CH0B/CH0C: 00/00 (0ms) → 02/02 (300ms)"))
+        XCTAssertEqual(sleeps.count, 3)
+    }
+
+    /// CH0C 쪽 값이 이미 켜져 있으면(01/01) CH0B만 써서는 03/03이 되어 02/02가 되지 않는다.
+    /// 실패로 처리하고 두 키를 00으로 되돌린다.
+    func testStartingFromCH0CBlockFailsAndRollsBack() {
+        let smc = SharedRegisterSMC(register: 0x01)
+
+        XCTAssertThrowsError(try controller(smc).disableCharging()) {
+            XCTAssertEqual($0 as? ChargingError, .pairVerifyFailed(expected: 0x02, observed: ["03/03"]))
+        }
+        XCTAssertEqual(described(smc.writes), ["CH0B=02", "CH0B=00", "CH0C=00"])
+        XCTAssertEqual(smc.register, 0x00)
+        XCTAssertTrue(lines.contains("최종 CH0B/CH0C = 03/03 (CH0B, CH0C 차단 값 모두 설정됨)"))
+        XCTAssertTrue(lines.contains("복구 완료: 두 키 모두 00"))
+        XCTAssertFalse(lines.contains { $0.hasPrefix("완료") })
+    }
+
+    func testWriteFailureRollsBackBothKeys() {
         let smc = FakeSMC(["CH0B": [0x00], "CH0C": [0x00]])
-        try controller(smc).disableCharging()
+        smc.failingWrites = [ch0b]
+        smc.failingValue = 0x02
 
-        XCTAssertEqual(smc.writes.map(\.key), [ch0b, ch0c])
-        XCTAssertEqual(smc.writes.map(\.bytes), [[0x02], [0x02]])
-        XCTAssertEqual(Array(lines.prefix(2)), ["현재 CH0B = 00 (충전 허용)", "현재 CH0C = 00 (충전 허용)"])
-        XCTAssertTrue(lines.contains("쓰기 확인 CH0C = 02"))
+        XCTAssertThrowsError(try controller(smc).disableCharging()) {
+            XCTAssertEqual($0 as? FakeSMCFailure, FakeSMCFailure())
+        }
+        XCTAssertEqual(described(smc.writes), ["CH0B=02", "CH0B=00", "CH0C=00"])
+        XCTAssertTrue(lines.contains("복구 완료: 두 키 모두 00"))
     }
 
-    func testUnknownValueWarnsButProceeds() throws {
-        let smc = FakeSMC(["CH0B": [0x01], "CH0C": [0x01]])
-        try controller(smc).disableCharging()
+    func testVerifyTimeoutRollsBack() {
+        let smc = SharedRegisterSMC()
+        smc.ignoredWrites = [ch0b]
 
-        XCTAssertEqual(lines.filter { $0.hasPrefix("경고:") }.count, 2)
-        XCTAssertEqual(smc.value("CH0B"), [0x02])
-        XCTAssertEqual(smc.value("CH0C"), [0x02])
+        XCTAssertThrowsError(try controller(smc).disableCharging()) {
+            XCTAssertEqual($0 as? ChargingError, .pairVerifyFailed(expected: 0x02, observed: ["00/00"]))
+        }
+        XCTAssertEqual(sleeps.count, 20)
+        XCTAssertEqual(described(smc.writes), ["CH0B=02", "CH0B=00", "CH0C=00"])
+        XCTAssertTrue(lines.contains("복구 완료: 두 키 모두 00"))
+    }
+
+    /// 복구까지 실패해도 원래(차단 쓰기) 오류를 던지고, 복구 실패를 알린다.
+    func testRollbackFailureStillThrowsOriginalError() {
+        let smc = SharedRegisterSMC(register: 0x01)
+        smc.ignoredWrites = [ch0c]
+
+        XCTAssertThrowsError(try controller(smc).disableCharging()) {
+            XCTAssertEqual($0 as? ChargingError, .pairVerifyFailed(expected: 0x02, observed: ["03/03"]))
+        }
+        XCTAssertEqual(smc.register, 0x01)
+        XCTAssertTrue(lines.contains { $0.hasPrefix("복구 실패") })
     }
 
     func testMissingKeyOrWrongSizeWritesNothing() {
@@ -43,53 +116,23 @@ final class DisableChargingTests: XCTestCase {
         XCTAssertTrue(wrongSize.writes.isEmpty)
     }
 
-    func testSecondKeyWriteFailureRevertsBothToZero() {
-        let smc = FakeSMC(["CH0B": [0x00], "CH0C": [0x00]])
-        smc.failingWrites = [ch0c]
-        smc.failingValue = 0x02
-
-        XCTAssertThrowsError(try controller(smc).disableCharging()) {
-            XCTAssertEqual($0 as? FakeSMCFailure, FakeSMCFailure())
+    /// disable-charging은 어떤 경로에서도 CH0C에 02를 쓰지 않는다.
+    func testNeverWritesTwoToCH0C() {
+        for start: UInt8 in [0x00, 0x01, 0x02, 0x03] {
+            let smc = SharedRegisterSMC(register: start)
+            _ = try? controller(smc).disableCharging()
+            XCTAssertFalse(described(smc.writes).contains("CH0C=02"), "start=\(start)")
         }
-        XCTAssertEqual(smc.value("CH0B"), [0x00])
-        XCTAssertEqual(smc.value("CH0C"), [0x00])
-        XCTAssertTrue(lines.contains("복구 완료: 두 키 모두 00"))
-    }
-
-    func testFirstKeyVerifyMismatchSkipsSecondKeyAndReverts() {
-        let smc = FakeSMC(["CH0B": [0x00], "CH0C": [0x00]])
-        smc.ignoredWrites = [ch0b]
-        smc.failingValue = 0x02
-
-        XCTAssertThrowsError(try controller(smc).disableCharging()) {
-            XCTAssertEqual($0 as? ChargingError, .verifyFailed(key: ch0b, expected: 0x02, observed: [[0x00]]))
-        }
-        XCTAssertFalse(smc.writes.contains { $0.key == ch0c && $0.bytes == [0x02] })
-        XCTAssertEqual(smc.value("CH0B"), [0x00])
-        XCTAssertEqual(smc.value("CH0C"), [0x00])
-    }
-
-    /// 복구까지 실패해도 원래(차단 쓰기) 오류를 던지고, 복구 실패를 알린다.
-    func testRevertFailureStillThrowsOriginalError() {
-        let smc = FakeSMC(["CH0B": [0x00], "CH0C": [0x00]])
-        smc.ignoredWrites = [ch0c]   // CH0B는 02가 되고, CH0C는 어떤 값도 반영되지 않음
-        smc.values[ch0c] = [0x01]
-
-        XCTAssertThrowsError(try controller(smc).disableCharging()) {
-            XCTAssertEqual($0 as? ChargingError, .verifyFailed(key: ch0c, expected: 0x02, observed: [[0x01]]))
-        }
-        XCTAssertEqual(smc.value("CH0B"), [0x00])
-        XCTAssertTrue(lines.contains { $0.hasPrefix("복구 실패") })
     }
 }
 
 final class RunDisableTests: XCTestCase {
-    private func makeController(_ smc: FakeSMC) -> ChargingController {
+    private func makeController(_ smc: SMCAccess) -> ChargingController {
         ChargingController(smc: smc, log: { _ in }, sleep: { _ in })
     }
 
     func testWithoutRevertWritesOnceAndDoesNotWait() {
-        let smc = FakeSMC(["CH0B": [0x00], "CH0C": [0x00]])
+        let smc = SharedRegisterSMC()
         var waited = false
         let code = runDisable(controller: makeController(smc), revertAfter: nil) { _ in
             waited = true
@@ -97,33 +140,31 @@ final class RunDisableTests: XCTestCase {
         }
         XCTAssertEqual(code, 0)
         XCTAssertFalse(waited)
-        XCTAssertEqual(smc.value("CH0B"), [0x02])
-        XCTAssertEqual(smc.value("CH0C"), [0x02])
+        XCTAssertEqual(smc.register, 0x02)
     }
 
     func testTimeoutRevertsAndExitsZero() {
-        let smc = FakeSMC(["CH0B": [0x00], "CH0C": [0x00]])
-        var seenDuringWait: [UInt8]?
+        let smc = SharedRegisterSMC()
+        var seenDuringWait: UInt8?
         var requested: Int?
         let code = runDisable(controller: makeController(smc), revertAfter: 60) { seconds in
             requested = seconds
-            seenDuringWait = smc.value("CH0B")
+            seenDuringWait = smc.register
             return .timeout
         }
         XCTAssertEqual(code, 0)
         XCTAssertEqual(requested, 60)
-        XCTAssertEqual(seenDuringWait, [0x02])
-        XCTAssertEqual(smc.value("CH0B"), [0x00])
-        XCTAssertEqual(smc.value("CH0C"), [0x00])
+        XCTAssertEqual(seenDuringWait, 0x02)
+        XCTAssertEqual(smc.register, 0x00)
+        XCTAssertEqual(described(smc.writes), ["CH0B=02", "CH0B=00", "CH0C=00"])
     }
 
     func testSignalRevertsAndExitsWithSignalCode() {
-        for (number, expected) in [(SIGINT, Int32(130)), (SIGTERM, Int32(143))] {
-            let smc = FakeSMC(["CH0B": [0x00], "CH0C": [0x00]])
+        for (number, expected) in [(SIGINT, Int32(130)), (SIGTERM, Int32(143)), (SIGHUP, Int32(129))] {
+            let smc = SharedRegisterSMC()
             let code = runDisable(controller: makeController(smc), revertAfter: 60) { _ in .signal(number) }
             XCTAssertEqual(code, expected)
-            XCTAssertEqual(smc.value("CH0B"), [0x00])
-            XCTAssertEqual(smc.value("CH0C"), [0x00])
+            XCTAssertEqual(smc.register, 0x00)
         }
     }
 
@@ -139,13 +180,13 @@ final class RunDisableTests: XCTestCase {
     }
 
     func testRevertFailureExitsOne() {
-        let smc = FakeSMC(["CH0B": [0x00], "CH0C": [0x00]])
+        let smc = SharedRegisterSMC()
         let code = runDisable(controller: makeController(smc), revertAfter: 60) { _ in
             smc.failingWrites = [ch0b]
             return .timeout
         }
         XCTAssertEqual(code, 1)
-        XCTAssertEqual(smc.value("CH0C"), [0x00])
+        XCTAssertEqual(smc.register, 0x02)
     }
 }
 
