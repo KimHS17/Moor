@@ -42,7 +42,7 @@ final class EnableChargingTests: XCTestCase {
 
     private func controller(_ smc: FakeSMC) -> ChargingController {
         lines = []
-        return ChargingController(smc: smc, log: { [unowned self] in self.lines.append($0) })
+        return ChargingController(smc: smc, log: { [unowned self] in self.lines.append($0) }, sleep: { _ in })
     }
 
     func testWritesZeroToBothKeysInOrderAndVerifies() throws {
@@ -94,7 +94,7 @@ final class EnableChargingTests: XCTestCase {
         let smc = FakeSMC(["CH0B": [0x02], "CH0C": [0x02]])
         smc.ignoredWrites = [ch0c]
         XCTAssertThrowsError(try controller(smc).enableCharging()) {
-            XCTAssertEqual($0 as? ChargingError, .verifyFailed(key: ch0c, expected: 0x00, actual: [0x02]))
+            XCTAssertEqual($0 as? ChargingError, .verifyFailed(key: ch0c, expected: 0x00, observed: [[0x02]]))
         }
     }
 

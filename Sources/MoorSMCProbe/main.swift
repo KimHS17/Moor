@@ -14,6 +14,9 @@ private func openSMC() -> SMCConnection? {
 }
 
 private func run(_ command: Command) -> Int32 {
+    // 파이프나 tee로 받아도 줄 단위로 바로 보이게 한다.
+    setlinebuf(stdout)
+
     // 쓰기 명령은 SMC를 열기 전에 권한부터 확인한다.
     if command.requiresRoot && geteuid() != 0 {
         printError("오류: 이 명령은 root 권한이 필요함. sudo로 직접 실행할 것")
@@ -34,6 +37,9 @@ private func run(_ command: Command) -> Int32 {
             }
         }
         return failed ? 1 : 0
+
+    case .watch(let seconds):
+        return Watch.run(smc: smc, seconds: seconds, log: { print($0) })
 
     case .enableCharging:
         let controller = ChargingController(smc: smc, log: { print($0) })

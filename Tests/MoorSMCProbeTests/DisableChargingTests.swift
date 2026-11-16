@@ -9,7 +9,7 @@ final class DisableChargingTests: XCTestCase {
 
     private func controller(_ smc: FakeSMC) -> ChargingController {
         lines = []
-        return ChargingController(smc: smc, log: { [unowned self] in self.lines.append($0) })
+        return ChargingController(smc: smc, log: { [unowned self] in self.lines.append($0) }, sleep: { _ in })
     }
 
     func testWritesTwoToBothKeysInOrderAndVerifies() throws {
@@ -62,7 +62,7 @@ final class DisableChargingTests: XCTestCase {
         smc.failingValue = 0x02
 
         XCTAssertThrowsError(try controller(smc).disableCharging()) {
-            XCTAssertEqual($0 as? ChargingError, .verifyFailed(key: ch0b, expected: 0x02, actual: [0x00]))
+            XCTAssertEqual($0 as? ChargingError, .verifyFailed(key: ch0b, expected: 0x02, observed: [[0x00]]))
         }
         XCTAssertFalse(smc.writes.contains { $0.key == ch0c && $0.bytes == [0x02] })
         XCTAssertEqual(smc.value("CH0B"), [0x00])
@@ -76,7 +76,7 @@ final class DisableChargingTests: XCTestCase {
         smc.values[ch0c] = [0x01]
 
         XCTAssertThrowsError(try controller(smc).disableCharging()) {
-            XCTAssertEqual($0 as? ChargingError, .verifyFailed(key: ch0c, expected: 0x02, actual: [0x01]))
+            XCTAssertEqual($0 as? ChargingError, .verifyFailed(key: ch0c, expected: 0x02, observed: [[0x01]]))
         }
         XCTAssertEqual(smc.value("CH0B"), [0x00])
         XCTAssertTrue(lines.contains { $0.hasPrefix("복구 실패") })
@@ -85,7 +85,7 @@ final class DisableChargingTests: XCTestCase {
 
 final class RunDisableTests: XCTestCase {
     private func makeController(_ smc: FakeSMC) -> ChargingController {
-        ChargingController(smc: smc, log: { _ in })
+        ChargingController(smc: smc, log: { _ in }, sleep: { _ in })
     }
 
     func testWithoutRevertWritesOnceAndDoesNotWait() {

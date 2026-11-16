@@ -11,6 +11,12 @@ final class FakeSMC: SMCAccess {
     var ignoredWrites: Set<FourCC> = []
     /// 지정한 값을 쓸 때만 실패하게 한다. nil이면 모든 값에 적용.
     var failingValue: UInt8?
+    /// 키에 쓴 직후 읽기에서 차례로 돌려줄 일시적인 값. 다 쓰면 실제 값으로 돌아간다.
+    var transientReadsAfterWrite: [FourCC: [[UInt8]]] = [:]
+    /// 쓴 값과 무관하게 최종적으로 자리 잡는 값(끝까지 맞지 않는 상황 재현용).
+    var settledValueAfterWrite: [FourCC: [UInt8]] = [:]
+    private var pendingReads: [FourCC: [[UInt8]]] = [:]
+    private(set) var readCounts: [FourCC: Int] = [:]
     private(set) var writes: [(key: FourCC, bytes: [UInt8])] = []
 
     init(_ values: [String: [UInt8]]) {
@@ -26,6 +32,12 @@ final class FakeSMC: SMCAccess {
 
     func read(_ key: FourCC) throws -> SMCValue {
         let info = try keyInfo(key)
+        readCounts[key, default: 0] += 1
+        if var pending = pendingReads[key], !pending.isEmpty {
+            let bytes = pending.removeFirst()
+            pendingReads[key] = pending
+            return SMCValue(key: key, info: info, bytes: bytes)
+        }
         return SMCValue(key: key, info: info, bytes: values[key]!)
     }
 
@@ -37,6 +49,7 @@ final class FakeSMC: SMCAccess {
         let applies = failingValue == nil || failingValue == bytes.first
         if applies && failingWrites.contains(key) { throw FakeSMCFailure() }
         if applies && ignoredWrites.contains(key) { return }
-        values[key] = bytes
+        values[key] = settledValueAfterWrite[key] ?? bytes
+        pendingReads[key] = transientReadsAfterWrite[key]
     }
 }
